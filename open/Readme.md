@@ -1,0 +1,1 @@
+输入的query存放在unlabel中，一行一个。输出到output文件中，query和返回的snippet用\t分隔，不同的query之间有多一个换行符
