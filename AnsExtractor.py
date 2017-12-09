@@ -9,7 +9,6 @@ from pyltp import NamedEntityRecognizer
 from pyltp import Parser
 from pyltp import VectorOfParseResult
 from pyltp import ParseResult
-#from pyltp import 
 
 LTP_DATA_DIR = 'E:\\LTP\\ltp-data-v3.3.1\\ltp_data\\'  # ltp模型目录的路径
 cws_model_path = os.path.join(LTP_DATA_DIR, 'cws.model')  # 分词模型路径，
@@ -21,25 +20,15 @@ ner_model_path = os.path.join(LTP_DATA_DIR, 'ner.model')  # 命名实体识别�
 par_model_path = os.path.join(LTP_DATA_DIR, 'parser.model')  # 依存句法分析模型路径
 # 模型名称为`parser.model`
 
-# 句法树的一个结点
-class Node(object):
-    def __init__(self):
-        pass
-
-# 一个句子的句法树
-class Sentence_Tree(object):
-    def __init__(self, arcs):
-        pass
-        
-
 # 答案提取模块类
 class AnsExtractor(object):
-    def __init__(self, sents, key_words, ques_type, ques):
-        self.sentences = sents # 候选答案句集合
-        self.key_words = key_words # 关键词集合
-        self.question_type = ques_type # 问题种类
-        self.question = ques # 处理后的问句（或问句集合？）
-        
+    
+    # 修改了init函数，传进来的句子、关键字等参数不再作为init函数的参数
+    # init做的事情只有：
+    # 1、加载模型
+    # 2、加载同义词词林
+    # 其他参数传递给主流程函数do_ans_extract
+    def __init__(self):
         self.segmentor = Segmentor()  # 初始化实例
         self.segmentor.load(cws_model_path)  # 加载模型
         self.postagger = Postagger()
@@ -49,17 +38,15 @@ class AnsExtractor(object):
         self.parser = Parser()
         self.parser.load(par_model_path)
         
-        self.stop_words = []
-        # self.sim_cloud_types = []
-        self.sim_word_code = {} # 每个词有一个list
-        self.a = 0.8
-        self.b = 0.2 # 这俩是参数，先就这么干吧
+        self.stop_words = [] # 停用词目前还没用到
+        self.sim_word_code = {} # 每个词有一个list，是它的编码（可能多个）
         self.get_sim_cloud()
         
     # 读取同义词词林
     """
     同义词词林中的词有三种关系，同义、相关（不一定同义）、独立词
     如果用于计算相似度的话，相关的词语具有相同的code，也是能接受的
+    所以并没有区分词关系，而是直接读取了词的code
     """
     def get_sim_cloud(self):
         sim_file = open("similarity.txt", 'r', encoding = "utf-8")
@@ -79,6 +66,45 @@ class AnsExtractor(object):
                     self.sim_word_code[word].append(code)
         sim_file.close()
         pass
+    
+    # 调用答案抽取算法，主流程函数，返回即为答案
+    def do_ans_extract(self, sents, key_words, ques_type, ques, a, b):
+        self.sentences = sents # 候选答案句集合
+        self.key_words = key_words # 关键词集合
+        self.question_type = ques_type # 问题种类
+        self.question = ques # 处理后的问句（或问句集合？）
+        self.a = a
+        self.b = b # 相似度计算算法的两个参数
+        
+        # 首先得到五个最有可能包含答案的句子
+        ans_sentences = self.sort_sentences()
+        print(ans_sentences)
+        
+        # 然后根据问题类型，在这五个句子中进行答案抽取
+        ans = ans_sentences[0]
+        if self.question_type == "人物":
+            # 这里需要命名实体识别
+            # 先直接怼吧
+            words = self.segmentor.segment(ans) # 分词
+            postags = self.postagger.postag(words) # 词性标注
+            netags = self.recognizer.recognize(words, postags)  # 命名实体识别
+            final_anses = []
+            tmp_str = ""
+            for i in range(len(netags)):
+                if netags[i] == "S-Nh":
+                    final_anses.append(words[i])
+                if netags[i] == "B-Nh":
+                    tmp_str = words[i]
+                if netags[i] == "I-Nh":
+                    tmp_str += words[i]
+                if netags[i] == "E-Nh":
+                    tmp_str += words[i]
+                    final_anses.append(tmp_str)
+            print(final_anses)
+        if len(final_anses) == 0:
+            return "无法回答此问题"
+        else:
+            return final_anses[0]
     
     # 计算候选答案句与问句的相似度，并返回排序后相似度最高的五个句子
     def sort_sentences(self):
@@ -140,6 +166,7 @@ class AnsExtractor(object):
         rela_words = []
         # 规定：rela_words数组的第一个词是核心词
         rela_words.append(words[centrial_word-1])
+        # 除了第一个词，后面把第二第三层的词算作依附于核心词的相关词
         for j in layer_2:
             rela_words.append(words[j-1])
         for j in layer_3:
@@ -149,6 +176,7 @@ class AnsExtractor(object):
     # 计算两个词语的语义距离
     # Dist(A,B) = min{dist(m,n)}
     # dist(m,n) = 2 * (7 - first_diff)
+    # first_diff是两个词的code的第一个不同字符所在的位置
     def calc_Dist(self, codes1, codes2):
         dist = 14
         for code1 in codes1:
@@ -164,6 +192,9 @@ class AnsExtractor(object):
         return dist
     
     # 计算某句子与问句的相似度
+    # 对于认不出来的词（同义词词林中没有）
+    # 有很大可能是专有名词等，这时都识别为 “谜、谜语”即可
+    # 专有名词于是被认为是相似的，我觉得这个是有道理的
     def calc_similarity(self, sentence, question_cr_words):
         # 对句子进行句法分析，得到c&r词集
         cr_words = self.get_centrial_and_rela_words(sentence)
@@ -176,7 +207,7 @@ class AnsExtractor(object):
             c_codes = self.sim_word_code[cr_words[0]]
         else:
             c_codes = ["Dk06D01"]
-        c_Dist = self.calc_Dist(question_c_codes, c_codes)
+            c_Dist = self.calc_Dist(question_c_codes, c_codes)
         if c_Dist == 0:
             c_sim = 1
         else:
@@ -226,50 +257,23 @@ class AnsExtractor(object):
         
         res = self.a * c_sim + self.b * ((q_s_sim + s_q_sim) / 2)
         return res
-    
-    # 得到问题的答案
-    def get_ans(self):
-        ans_sentences = self.sort_sentences()
-        print(ans_sentences)
-        ans = ans_sentences[0]
-        if self.question_type == "人物":
-            # 这里需要命名实体识别
-            # 先直接怼吧
-            words = self.segmentor.segment(ans) # 分词
-            postags = self.postagger.postag(words) # 词性标注
-            netags = self.recognizer.recognize(words, postags)  # 命名实体识别
-            final_anses = []
-            tmp_str = ""
-            for i in range(len(netags)):
-                if netags[i] == "S-Nh":
-                    final_anses.append(words[i])
-                if netags[i] == "B-Nh":
-                    tmp_str = words[i]
-                if netags[i] == "I-Nh":
-                    tmp_str += words[i]
-                if netags[i] == "E-Nh":
-                    tmp_str += words[i]
-                    final_anses.append(tmp_str)
-            print(final_anses)
-        if len(final_anses) == 0:
-            return "无法回答此问题"
-        else:
-            return final_anses[0]
 
-#test_sentences = ["《资治通鉴》是我国古代著名史学家、政治家司马光和他的助手刘攽、刘恕、范祖禹、司马康等人历时十九年编纂的一部规模空前的编年体通史巨著",
-#                  "《资治通鉴》（常简作《通鉴》）是由北宋司马光主编的一部多卷本编年体史书",
-#                  "《资治通鉴》是司马光及其助刘攽、刘怒、范祖禹等根据大量的史料编纂而成的一部编年体史书",
-#                  "《资治通鉴》是由北宋司马光主编的一部多卷本编年体史书",
-#                  "史记的作者是司马迁",
-#                  "《论语》这类书比作教材中的公式概念,把《资治通鉴》比作试题",
-#                  "想买一套《史记》和《资治通鉴》,求推荐版本",
-#                  " 姜鹏品读《资治通鉴》"]
-#ans_extractor = AnsExtractor(test_sentences, "", "人物", "资治通鉴的作者是")
-## 下面这个函数相当于模块的入口和出口，直接用就行
-#answer = ans_extractor.get_ans()
-#del(ans_extractor)
+# 现在生成答案提取器之后，调用do_ans_extract复用即可
+ans_extractor = AnsExtractor()
+# 测试1
+test_sentences = ["《资治通鉴》是我国古代著名史学家、政治家司马光和他的助手刘攽、刘恕、范祖禹、司马康等人历时十九年编纂的一部规模空前的编年体通史巨著",
+                  "《资治通鉴》（常简作《通鉴》）是由北宋司马光主编的一部多卷本编年体史书",
+                  "《资治通鉴》是司马光及其助刘攽、刘怒、范祖禹等根据大量的史料编纂而成的一部编年体史书",
+                  "《资治通鉴》是由北宋司马光主编的一部多卷本编年体史书",
+                  "史记的作者是司马迁",
+                  "《论语》这类书比作教材中的公式概念,把《资治通鉴》比作试题",
+                  "想买一套《史记》和《资治通鉴》,求推荐版本",
+                  " 姜鹏品读《资治通鉴》"]
+answer = ans_extractor.do_ans_extract(test_sentences, "", "人物", "《资治通鉴》的作者是谁？", 
+                                      0.8, 0.2)
+print(answer)
 
-
+# 测试2
 test_sentences = ["木婉清的母亲秦红棉被段正淳负心后伤心欲绝",
                   "《天龙八部》中段誉和木婉清的爱情故事",
                   "木婉清,金庸武侠小说《天龙八部》中的人物",
@@ -278,6 +282,6 @@ test_sentences = ["木婉清的母亲秦红棉被段正淳负心后伤心欲绝"
                   "木婉清的个性里沿袭了一部分母亲的执着和父亲的多情",
                   "《天龙八部》中木婉清的饰演者有很多,最近的就有赵圆瑗、蒋欣等",
                   "秦红棉，金庸武侠小说《天龙八部》中的人物，外号修罗刀,是木婉清的母亲"]
-ans_extractor = AnsExtractor(test_sentences, "", "人物", "金庸小说《天龙八部》中，木婉清的母亲是谁")
-answer = ans_extractor.get_ans()
+answer = ans_extractor.do_ans_extract(test_sentences, "", "人物", "金庸小说《天龙八部》中，木婉清的母亲是谁?", 
+                                      0.8, 0.2)
 print(answer)
