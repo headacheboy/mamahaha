@@ -207,7 +207,7 @@ class AnsExtractor(object):
             c_codes = self.sim_word_code[cr_words[0]]
         else:
             c_codes = ["Dk06D01"]
-            c_Dist = self.calc_Dist(question_c_codes, c_codes)
+        c_Dist = self.calc_Dist(question_c_codes, c_codes)
         if c_Dist == 0:
             c_sim = 1
         else:
