@@ -7,10 +7,11 @@ from pyltp import Segmentor
 from pyltp import Postagger
 from pyltp import NamedEntityRecognizer
 from pyltp import Parser
+from pyltp import SementicRoleLabeller
 from pyltp import VectorOfParseResult
 from pyltp import ParseResult
 
-LTP_DATA_DIR = 'E:\\LTP\\ltp-data-v3.3.1\\ltp_data\\'  # ltp模型目录的路径
+LTP_DATA_DIR = 'D:\project\ltp-data-v3.3.1\ltp_data'  # ltp模型目录的路径
 cws_model_path = os.path.join(LTP_DATA_DIR, 'cws.model')  # 分词模型路径，
 # 模型名称为`cws.model`
 pos_model_path = os.path.join(LTP_DATA_DIR, 'pos.model')  # 词性标注模型路径，
@@ -19,6 +20,7 @@ ner_model_path = os.path.join(LTP_DATA_DIR, 'ner.model')  # 命名实体识别�
 # 模型名称为`ner.model`
 par_model_path = os.path.join(LTP_DATA_DIR, 'parser.model')  # 依存句法分析模型路径
 # 模型名称为`parser.model`
+srl_model_path = os.path.join(LTP_DATA_DIR,'srl') # 语义角色标注模型
 
 # 答案提取模块类
 class AnsExtractor(object):
@@ -37,6 +39,9 @@ class AnsExtractor(object):
         self.recognizer.load(ner_model_path)  # 加载模型
         self.parser = Parser()
         self.parser.load(par_model_path)
+        self.labeller = SementicRoleLabeller()
+        self.labeller.load(srl_model_path)
+
         
         self.stop_words = [] # 停用词目前还没用到
         self.sim_word_code = {} # 每个词有一个list，是它的编码（可能多个）
@@ -66,7 +71,128 @@ class AnsExtractor(object):
                     self.sim_word_code[word].append(code)
         sim_file.close()
         pass
-    
+
+    def get_all_NER(self,ans_sentence,type):
+        '''
+        得到答案中的所有某一类型的命名实体
+        :param ans_sentence: 答案句子
+        :param type: 命名实体类型
+        :return: 该类型的所有命名实体集合
+        '''
+        words = self.segmentor.segment(ans_sentence)  # 分词
+        postags = self.postagger.postag(words)  # 词性标注
+        netags = self.recognizer.recognize(words, postags)  # 命名实体识别
+
+        ner_lst = list() # 命名实体集合
+        temp_str = ''
+        for i in range(len(netags)):
+            if netags[i] == 'S-'+ type:
+                ner_lst.append(words[i])
+            elif netags[i] == 'B-' + type:
+                temp_str = words[i]
+            elif netags[i] == 'I-' + type:
+                temp_str += words[i]
+            elif netags[i] == 'E-' + type:
+                temp_str += words[i]
+                ner_lst.append(temp_str)
+        return ner_lst
+
+    def get_pos_lst(self,sentence,type):
+        '''
+        获得句子中的某种词性集合
+        :param sentence:
+        :return: 返回词性集合
+        '''
+        words = list(self.segmentor.segment(sentence))
+        postags = list(self.postagger.postag(words))
+
+        temp_tag = ''
+        postag_lst = list()
+        for i in range(len(postags)):
+            if postags[i] == type:
+                temp_tag += words[i]
+            else:
+                if temp_tag != '':
+                    postag_lst.append(temp_tag)
+                    temp_tag = ''
+        return postag_lst
+
+    def get_context_type(self,ques):
+        '''
+        判断问题类型 是上一句还是下一句
+        :param ques: 问题语句
+        :return: '上句' '下句'
+        '''
+        next_word = ['下句','下一句','下文','后文']
+        for word in next_word:
+            if ques.find(word) != -1:
+                return '下文'
+        return '上文'
+
+    def get_parse_oneclass(self,sent):
+        '''
+        获得句子的第二层 节点
+        :param sent:
+        :return:返回词语及其依存关系
+        '''
+        words = list(self.segmentor.segment(sent))
+        postags = list(self.postagger.postag(words))
+        arcs = self.parser.parse(words,postags)
+        result_arc = dict()
+        # 依存关系的下标 是从1开始的   0表示root
+        i = 0
+        for arc in arcs:
+            if arc.head == 0:
+                root = {'word':words[i],'rel':arc.relation,'rel_index':i+1,'tag':postags[i]}
+                head = words[i]
+            i = i + 1
+        i = 0
+        for arc in arcs:
+            if arc.head == root['rel_index']:
+                result_arc[words[i]] = {'rel':arc.relation,'tag':postags[i]}
+            i = i+1
+
+        return head,result_arc
+
+    def list_has_intersection(self,lsta,lstb):
+        '''
+        lstb中的单词 有否存在某一个单词  是lsta的某个单词  子串
+        :param lsta:
+        :param lstb:
+        :return: lsta的某个单词
+        '''
+        for wa in lsta:
+            for wb in lstb:
+                if wa.find(wb) > -1:
+                    return wa
+        return None
+
+    def get_arc_by_index(self,arcs,index):
+        '''
+        根据index 得到arc
+        :param index: 这里的index 与语法依存树保持一致  即从1开始
+        :return: arc
+        '''
+        i = 1
+        for arc in arcs:
+            if i == index:
+                return arc
+            i = i + 1
+
+
+    def get_core_rel(self,arcs,words,word):
+        index = words.index(word) + 1
+        arc = self.get_arc_by_index(arcs,index)
+        while(arc.relation == 'ATT'):
+            arc = self.get_arc_by_index(arcs,arc.head)
+        arc = self.get_arc_by_index(arc.head)
+        return arc
+
+
+
+
+
+
     # 调用答案抽取算法，主流程函数，返回即为答案
     def do_ans_extract(self, sents, key_words, ques_type, ques, a, b):
         self.sentences = sents # 候选答案句集合
@@ -75,36 +201,206 @@ class AnsExtractor(object):
         self.question = ques # 处理后的问句（或问句集合？）
         self.a = a
         self.b = b # 相似度计算算法的两个参数
-        
+
+        # 去掉候选答案句中的空白字符
+        for i in range(len(self.sentences)):
+            self.sentences[i] = ''.join(self.sentences[i].split())
         # 首先得到五个最有可能包含答案的句子
         ans_sentences = self.sort_sentences()
         print(ans_sentences)
         
         # 然后根据问题类型，在这五个句子中进行答案抽取
         ans = ans_sentences[0]
+        print(ans)
+
+        print(self.get_all_NER(ques,'Nh'))
         if self.question_type == "人物":
             # 这里需要命名实体识别
             # 先直接怼吧
-            words = self.segmentor.segment(ans) # 分词
-            postags = self.postagger.postag(words) # 词性标注
-            netags = self.recognizer.recognize(words, postags)  # 命名实体识别
-            final_anses = []
-            tmp_str = ""
-            for i in range(len(netags)):
-                if netags[i] == "S-Nh":
-                    final_anses.append(words[i])
-                if netags[i] == "B-Nh":
-                    tmp_str = words[i]
-                if netags[i] == "I-Nh":
-                    tmp_str += words[i]
-                if netags[i] == "E-Nh":
-                    tmp_str += words[i]
-                    final_anses.append(tmp_str)
+            final_anses = self.get_all_NER(ans,'Nh')
             print(final_anses)
-        if len(final_anses) == 0:
-            return "无法回答此问题"
-        else:
-            return final_anses[0]
+            for item in final_anses:
+                if ques.find(item) == -1:
+                    return item
+            if len(final_anses) == 0:
+                return "没有答案"
+            else:
+                return final_anses[0]
+        elif self.question_type == '地名':
+            final_anses = self.get_all_NER(ans, 'Ns')
+            print(final_anses)
+            for item in final_anses:
+                if ques.find(item) == -1:
+                    return item
+            if len(final_anses) == 0:
+                return "没有答案"
+            else:
+                return final_anses[0]
+        elif self.question_type == '机构名':
+            final_anses = self.get_all_NER(ans, 'Ni')
+            print(final_anses)
+            for item in final_anses:
+                if ques.find(item) == -1:
+                    return item
+            if len(final_anses) == 0:
+                return "没有答案"
+            else:
+                return final_anses[0]
+        elif self.question_type == '时间':
+            for sentence in ans_sentences:
+                time_lst = self.get_pos_lst(sentence,'nt')
+                if len(time_lst) == 0:
+                    pass
+                else:
+                    return time_lst[0]
+            return ans_sentences[0] # 没有找到时间  返回排名最高的句子
+        elif self.question_type == '数字':
+            for sentence in ans_sentences:
+                time_lst = self.get_pos_lst(sentence,'m')
+                if len(time_lst) == 0:
+                    pass
+                else:
+                    return time_lst[0]
+            return ans_sentences[0] # 没有找到时间  返回排名最高的句子
+        elif self.question_type == '上下句':
+            type = self.get_context_type(ques)
+            pattern1 = re.compile('“(.*?)”')
+            pattern2 = re.compile('"(.*?)"')
+            shici_sent_lst = pattern1.findall(ques)
+            shici_sent_lst.extend(pattern2.findall(ques))
+            shici_sent = shici_sent_lst[-1]
+            # 寻找合适的答案
+            for sent in ans_sentences:
+                if sent.find(shici_sent) > -1:
+                    ans = sent
+                    break
+            punc_lst = [',','.','?','，','。','？','!','！']
+            start_index = -1
+            end_index = -1
+            if type == '下文':
+                index = ans.find(shici_sent)
+                for i in range(index,len(ans)):
+                    if ans[i] in punc_lst and start_index == -1:
+                        start_index = i
+                    elif ans[i] in punc_lst and end_index == -1:
+                        end_index = i
+                        break
+                return ans[start_index+1:end_index]
+            else:
+                index = ans.find(shici_sent)
+                start_index = -1
+                end_index = -1
+                for i in range(index,-1,-1):
+                    if ans[i] in punc_lst:
+                        end_index = i
+                        break
+                for i in range(end_index-1,-1,-1):
+                    if ans[i] in punc_lst:
+                        start_index = i
+                        break
+                return ans[start_index+1:end_index]
+        else: #通用解决方法
+            ans = ans_sentences[0] # 从候选答案集中选出一个句子
+            ans_words = list(self.segmentor.segment(ans)) #ａｎｓ　的分词
+            ans_postags = list(self.postagger.postag(ans_words)) # 词性标注
+            ans_arcs = self.parser.parse(ans_words,ans_postags)
+            # 问句进行分词
+            # 有的问句没有类型  直接加一个‘什么’
+            if (ques[-1] in ['?','？','.','。','!','！'] and ques[-2] == '是'):
+                ques = ques[0:-1] + '什么' + ques[-1]
+            elif ques[-1] == '是':
+                ques = ques + '什么'
+            que_words = list(self.segmentor.segment(ques))
+            que_postags = list(self.postagger.postag(que_words))
+            que_arcs = self.parser.parse(que_words,que_postags)
+
+
+            # 找到ans_arcs中的head
+            i = 0
+            for arc in ans_arcs:
+                if arc.relation == 'HED':
+                    ans_core_word = ans_words[i]
+                    ans_core_word_index = i + 1 # 依存关系从1开始   0是root
+                    break
+                i = i + 1
+            ans_second_words = dict() # 依存关系树中 第二级词语
+            i = 0
+            for arc in ans_arcs:
+                if arc.head == ans_core_word_index:
+                    ans_second_words[ans_words[i]] = {'tag':ans_postags[i],'rea_index':i,'rel':arc.relation}
+                i = i+1
+
+            # 找到que_arcs中的head
+            i = 0
+            for arc in que_arcs:
+                if arc.relation == 'HED':
+                    que_core_word = ans_words[i]
+                    que_core_word_index = i + 1  # 依存关系从1开始   0是root
+                    break
+                i = i + 1
+            que_second_words = dict()  # 依存关系树中 第二级词语
+            i = 0
+            for arc in que_arcs:
+                if arc.head == que_core_word_index:
+                    que_second_words[que_words[i]] = {'tag': que_postags[i], 'rea_index': i, 'rel': arc.relation}
+                i = i + 1
+
+            # 删除 非名词 在问题种出现的名词
+            for word,dic in ans_second_words.items():
+                if ques.find(word) > -1 or dic['tag'] != 'n':
+                    del ans_second_words[word]
+                    continue
+
+            if len(ans_second_words) == 0:
+                return ans
+            elif len(ans_second_words) == 1:
+                for word,dic in ans_second_words.items():
+                    return  word
+
+            # 依旧存在多个名词时
+            question_word_list = ['谁','什么','哪一个','哪个','哪']
+            question_word = self.list_has_intersection(que_words,question_word_list) # 疑问词
+            if question_word == None: # 找不到 返回第一个词语
+                for word,dic in ans_second_words.items():
+                    return  word
+
+            if question_word in list(que_second_words.keys()):
+                rel = que_second_words[question_word]['rel']
+            else:
+                rel = self.get_core_rel(que_arcs,que_words,question_word)
+
+            for word,dic in ans_second_words:
+                if dic['rel'] == rel:
+                    return word
+            # 没有找到一样的 返回第一个吧
+            for word,dic in ans_second_words:
+                return word
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     
     # 计算候选答案句与问句的相似度，并返回排序后相似度最高的五个句子
     def sort_sentences(self):
@@ -151,6 +447,7 @@ class AnsExtractor(object):
             if arc.relation == "HED":
                 centrial_word = i # 核心词
             i = i+1
+
         i = 1
         for arc in arcs:
             if arc.head == centrial_word:
@@ -260,20 +557,20 @@ class AnsExtractor(object):
 
 # 现在生成答案提取器之后，调用do_ans_extract复用即可
 ans_extractor = AnsExtractor()
-# 测试1
-test_sentences = ["《资治通鉴》是我国古代著名史学家、政治家司马光和他的助手刘攽、刘恕、范祖禹、司马康等人历时十九年编纂的一部规模空前的编年体通史巨著",
-                  "《资治通鉴》（常简作《通鉴》）是由北宋司马光主编的一部多卷本编年体史书",
-                  "《资治通鉴》是司马光及其助刘攽、刘怒、范祖禹等根据大量的史料编纂而成的一部编年体史书",
-                  "《资治通鉴》是由北宋司马光主编的一部多卷本编年体史书",
-                  "史记的作者是司马迁",
-                  "《论语》这类书比作教材中的公式概念,把《资治通鉴》比作试题",
-                  "想买一套《史记》和《资治通鉴》,求推荐版本",
-                  " 姜鹏品读《资治通鉴》"]
-answer = ans_extractor.do_ans_extract(test_sentences, "", "人物", "《资治通鉴》的作者是谁？", 
-                                      0.8, 0.2)
-print(answer)
-
-# 测试2
+# # 测试1
+# test_sentences = ["《资治通鉴》是我国古代著名史学家、政治家司马光和他的助手刘攽、刘恕、范祖禹、司马康等人历时十九年编纂的一部规模空前的编年体通史巨著",
+#                   "《资治通鉴》（常简作《通鉴》）是由北宋司马光主编的一部多卷本编年体史书",
+#                   "《资治通鉴》是司马光及其助刘攽、刘怒、范祖禹等根据大量的史料编纂而成的一部编年体史书",
+#                   "《资治通鉴》是由北宋司马光主编的一部多卷本编年体史书",
+#                   "史记的作者是司马迁",
+#                   "《论语》这类书比作教材中的公式概念,把《资治通鉴》比作试题",
+#                   "想买一套《史记》和《资治通鉴》,求推荐版本",
+#                   " 姜鹏品读《资治通鉴》"]
+# answer = ans_extractor.do_ans_extract(test_sentences, "", "人物", "《资治通鉴》的作者是谁？",
+#                                       0.8, 0.2)
+# print(answer)
+#
+# # 测试2
 test_sentences = ["木婉清的母亲秦红棉被段正淳负心后伤心欲绝",
                   "《天龙八部》中段誉和木婉清的爱情故事",
                   "木婉清,金庸武侠小说《天龙八部》中的人物",
@@ -282,6 +579,16 @@ test_sentences = ["木婉清的母亲秦红棉被段正淳负心后伤心欲绝"
                   "木婉清的个性里沿袭了一部分母亲的执着和父亲的多情",
                   "《天龙八部》中木婉清的饰演者有很多,最近的就有赵圆瑗、蒋欣等",
                   "秦红棉，金庸武侠小说《天龙八部》中的人物，外号修罗刀,是木婉清的母亲"]
-answer = ans_extractor.do_ans_extract(test_sentences, "", "人物", "金庸小说《天龙八部》中，木婉清的母亲是谁?", 
+answer = ans_extractor.do_ans_extract(test_sentences, "", "人物", "金庸小说《天龙八部》中，木婉清的母亲是谁?",
                                       0.8, 0.2)
 print(answer)
+# 测试3
+# test_sentences = ["根据1939年签署的苏德互不侵犯条约，该市被划入罗马尼亚管治",
+#                   "这一示威是为了希望世界能够关心三国共同的历史遭遇——在1939年8月23日苏联和纳粹德国秘密签订的《苏德互不侵犯条约 》中，该三国被苏联占领。",
+#                   "苏德互不侵犯条约《苏德 互不侵犯条约》是1939年第二次世界大战爆发前苏联与纳粹德国在莫斯科所秘密签订之互不侵犯条约，目标是初步建立苏德在扩张之间的友谊与共识，并导致波兰被瓜分。",
+#                   "最后 ， 双方 在 8 月 23 日 签订 德苏 互不侵犯条约.",
+#                   " 8 月 17 日 ， 德驻 苏 大使 舒伦堡 再次 会见 莫洛托夫 ， 表示 愿 与 苏 缔结 一项 互不侵犯条约 。"
+#                  ]
+# answer = ans_extractor.do_ans_extract(test_sentences, "", "地名", "《苏德互不侵犯条约》的签订地点是",
+#                                       0.8, 0.2)
+# print(answer)
