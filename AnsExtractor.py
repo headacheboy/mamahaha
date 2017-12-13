@@ -43,6 +43,12 @@ class AnsExtractor(object):
         self.labeller = SementicRoleLabeller()
         self.labeller.load(srl_model_path)
         self.iscolor_lst = ['什么颜色',"哪种颜色","哪个颜色"]
+        self.unit_lst = ["回","对","山","只","刀","群","江","条","个","打","尾","手","双","张","溪","挑","坡","首","令","网","辆","座","阵","队",
+                         "顶","匹","担","墙","壳","炮","场","扎","棵","支","颗","钟","单","曲","客","罗","岭","阙",
+                         "捆","丘","腔","贯","袭","砣","窠","岁","倍","枚","次"]
+        self.isnum_lst = list()
+        for unit in self.unit_lst:
+            self.isnum_lst.append("多少"+unit)
         
         self.stop_words = [] # 停用词目前还没用到
         self.sim_word_code = {} # 每个词有一个list，是它的编码（可能多个）
@@ -260,17 +266,24 @@ class AnsExtractor(object):
                 return ans
             else:
                 return final_anses[0]
+        elif self.question_type == 'NUMBER' or self.has_spe_words(self.question,self.isnum_lst):
+            for sentence in ans_sentences:
+                for num_word in self.isnum_lst:
+                    if self.question.find(num_word) > -1:
+                        pattern = re.compile("([\d|零|一|二|三|四|五|六|七|八|九|十|百|千|万|亿]+){unit}".format(unit=num_word[-1]))
+                        final_anses = pattern.findall(ans)
+                        if final_anses:
+                            return final_anses[0]
+
+                num_lst = self.get_pos_lst(sentence,'m')
+                if len(num_lst) == 0:
+                    pass
+                else:
+                    return num_lst[0]
+            return ans_sentences[0] # 没有找到时间  返回排名最高的句子
         elif self.question_type == 'TIME':
             for sentence in ans_sentences:
                 time_lst = self.get_pos_lst(sentence,'nt')
-                if len(time_lst) == 0:
-                    pass
-                else:
-                    return time_lst[0]
-            return ans_sentences[0] # 没有找到时间  返回排名最高的句子
-        elif self.question_type == 'NUMBER':
-            for sentence in ans_sentences:
-                time_lst = self.get_pos_lst(sentence,'m')
                 if len(time_lst) == 0:
                     pass
                 else:
@@ -408,9 +421,11 @@ class AnsExtractor(object):
             # 依旧存在多个名词时
             question_word_list = ['谁','什么','哪一个','哪个','哪','多少']
             question_word = self.list_has_intersection(que_words,question_word_list) # 疑问词
+            final_anses = ''
             if question_word == None: # 找不到 返回第一个词语
                 for word,dic in ans_second_words.items():
-                    return  word
+                    final_anses = final_anses + word
+                return final_anses
 
             if question_word in list(que_second_words.keys()):
                 rel = que_second_words[question_word]['rel']
@@ -422,7 +437,8 @@ class AnsExtractor(object):
                     return word
             # 没有找到一样的 返回第一个吧
             for word,dic in ans_second_words.items():
-                return word
+                final_anses = final_anses + word
+            return final_anses
 
 
 
