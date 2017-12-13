@@ -220,6 +220,13 @@ class AnsExtractor(object):
         self.a = a
         self.b = b # 相似度计算算法的两个参数
 
+        if self.has_spe_words(self.question,self.isnum_lst):
+            self.question_type = "NUMBER"
+            ques_type = "NUMBER"
+        if self.has_spe_words(self.question,self.iscolor_lst):
+            self.question_type = "COLOR"
+            ques_type = "COLOR"
+
         # 去掉候选答案句中的空白字符
         for i in range(len(self.sentences)):
             self.sentences[i] = ''.join(self.sentences[i].split())
@@ -266,7 +273,7 @@ class AnsExtractor(object):
                 return ans
             else:
                 return final_anses[0]
-        elif self.question_type == 'NUMBER' or self.has_spe_words(self.question,self.isnum_lst):
+        elif self.question_type == 'NUMBER' :
             for sentence in ans_sentences:
                 for num_word in self.isnum_lst:
                     if self.question.find(num_word) > -1:
@@ -327,7 +334,7 @@ class AnsExtractor(object):
                         start_index = i
                         break
                 return ans[start_index+1:end_index]
-        elif self.question_type == 'COLOR' or self.has_spe_words(self.question,self.iscolor_lst):#对颜色进行提取
+        elif self.question_type == 'COLOR':#对颜色进行提取
             ans_words = list(self.segmentor.segment(ans))
             ans_postags = list(self.postagger.postag(ans_words))
             final_anses = list()
