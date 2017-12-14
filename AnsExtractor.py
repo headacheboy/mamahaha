@@ -42,10 +42,14 @@ class AnsExtractor(object):
         self.parser.load(par_model_path)
         self.labeller = SementicRoleLabeller()
         self.labeller.load(srl_model_path)
+        self.istime_lst = ['年份是',"时间是"]
         self.iscolor_lst = ['什么颜色',"哪种颜色","哪个颜色"]
         self.unit_lst = ["回","对","山","只","刀","群","江","条","个","打","尾","手","双","张","溪","挑","坡","首","令","网","辆","座","阵","队",
                          "顶","匹","担","墙","壳","炮","场","扎","棵","支","颗","钟","单","曲","客","罗","岭","阙",
                          "捆","丘","腔","贯","袭","砣","窠","岁","倍","枚","次"]
+        self.islocation_lst = ['哪个城市',"哪个国家",'国籍是',"什么国籍","哪个省","哪座城市"]
+        self.isorganization_lst = ['哪个组织',"组织是"]
+        self.isperson_lst = ['哪个皇帝',"是谁","什么名字","者是"]
         self.isnum_lst = list()
         for unit in self.unit_lst:
             self.isnum_lst.append("多少"+unit)
@@ -226,6 +230,15 @@ class AnsExtractor(object):
         if self.has_spe_words(self.question,self.iscolor_lst):
             self.question_type = "COLOR"
             ques_type = "COLOR"
+        if self.has_spe_words(self.question,self.istime_lst):
+            self.question_type = "TIME"
+            ques_type = "TIME"
+        if self.has_spe_words(self.question,self.islocation_lst):
+            self.question_type = "LOCATION"
+            ques_type = "LOCATION"
+        if self.has_spe_words(self.question,self.isperson_lst):
+            self.question_type = "PERSON"
+            ques_type = "PERSON"
 
         # 去掉候选答案句中的空白字符
         for i in range(len(self.sentences)):
