@@ -460,7 +460,7 @@ class AnsExtractor(object):
         sims = []
         i = 0
         for sentence in self.sentences:
-            sim = self.cal_sim(sentence, self.question) #!!!  这里修改了  相似度算法
+            sim = 0.1*self.calc_similarity(sentence, self.question) + 0.9*self.cal_sim(sentence, self.question) #!!!  这里修改了  相似度算法
             sims.append((i, sim))
             i = i+1
         sims.sort(key = lambda item:item[1], reverse = True)
@@ -578,7 +578,7 @@ class AnsExtractor(object):
             c_sim = 1
         else:
             c_sim = 7 / (7 + c_Dist)
-        
+
         # 计算非核心词相似度
         question_r_codes = [0] * (len(question_cr_words) - 1)
         for i in range(1, len(question_cr_words)):
