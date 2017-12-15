@@ -11,23 +11,13 @@
 /ltp
 
 ├── ltp_data
-
 │   ├── cws.model
-
 │   ├── ner.model
-
 │   ├── parser.model
-
 │   └── pos.model
-
 ├── ltp_test.exe
-
 ├── cws_cmdline.exe
-
 ├── ner_cmdline.exe
-
 ├── par_cmdline.exe
-
 ├── pos_cmdline.exe
-
 └── srl_cmdline.exe
