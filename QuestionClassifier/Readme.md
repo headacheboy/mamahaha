@@ -12,3 +12,5 @@ input和testing。input是输入的测试集。需要使用preprocess.py将input
 使用了Hanlp。
 
 输出在questionType中。
+
+直接调用main.py即可。

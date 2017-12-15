@@ -2,8 +2,8 @@ from jpype import *
 startJVM(getDefaultJVMPath(), "-Djava.class.path=D:\hanlp\hanlp-1.5.0.jar;D:\hanlp", "-Xms1g",
          "-Xmx1g")
 HanLP = JClass("com.hankcs.hanlp.HanLP")
-#file = open("question_simplified", encoding='utf-8')
-#fileO = open("question", "w", encoding='utf-8')
+file = open("question_simplified", encoding='utf-8')
+fileO = open("question", "w", encoding='utf-8')
 file = open("input", encoding='utf-8')
 fileO = open("testing", "w", encoding='utf-8')
 
