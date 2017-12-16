@@ -227,16 +227,16 @@ class AnsExtractor(object):
         if self.has_spe_words(self.question,self.isnum_lst):
             self.question_type = "NUMBER"
             ques_type = "NUMBER"
-        if self.has_spe_words(self.question,self.iscolor_lst):
+        elif self.has_spe_words(self.question,self.iscolor_lst):
             self.question_type = "COLOR"
             ques_type = "COLOR"
-        if self.has_spe_words(self.question,self.istime_lst):
+        elif self.has_spe_words(self.question,self.istime_lst):
             self.question_type = "TIME"
             ques_type = "TIME"
-        if self.has_spe_words(self.question,self.islocation_lst):
+        elif self.has_spe_words(self.question,self.islocation_lst):
             self.question_type = "LOCATION"
             ques_type = "LOCATION"
-        if self.has_spe_words(self.question,self.isperson_lst):
+        elif self.has_spe_words(self.question,self.isperson_lst):
             self.question_type = "PERSON"
             ques_type = "PERSON"
 
