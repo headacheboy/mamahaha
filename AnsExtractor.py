@@ -344,6 +344,8 @@ class AnsExtractor(object):
         # print(ans_sentences)
         
         # 然后根据问题类型，在这五个句子中进行答案抽取
+        if len(ans_sentences) == 0:
+            return "没有找到相关内容"
         ans = ans_sentences[0]
         # print(ans)
 
@@ -425,6 +427,8 @@ class AnsExtractor(object):
             pattern2 = re.compile('"(.*?)"')
             shici_sent_lst = pattern1.findall(ques)
             shici_sent_lst.extend(pattern2.findall(ques))
+            if len(shici_sent_lst) == 0:
+                return self.gen_short_ans(ques_kw_lst,ans)
             shici_sent = shici_sent_lst[-1]
             # 寻找合适的答案
             for sent in ans_sentences:
@@ -443,7 +447,7 @@ class AnsExtractor(object):
                     elif ans[i] in punc_lst and end_index == -1:
                         end_index = i
                         break
-                return ans[start_index+1:end_index]
+                return ans[start_index+1:end_index][0:20]
             else:
                 index = ans.find(shici_sent)
                 start_index = -1
@@ -456,7 +460,7 @@ class AnsExtractor(object):
                     if ans[i] in punc_lst:
                         start_index = i
                         break
-                return ans[start_index+1:end_index]
+                return ans[start_index+1:end_index][0:20]
         elif self.question_type == 'COLOR':#对颜色进行提取
             ans_words = list(self.segmentor.segment(ans))
             ans_postags = list(self.postagger.postag(ans_words))
@@ -625,13 +629,17 @@ class AnsExtractor(object):
         sims = []
         i = 0
         for sentence in self.sentences:
-            sim = 0.1*self.calc_similarity(sentence, self.question) + 0.9*self.cal_sim(sentence, self.question) #!!!  这里修改了  相似度算法
+            try:
+                sim = 0.1*self.calc_similarity(sentence, self.question) + 0.9*self.cal_sim(sentence, self.question) #!!!  这里修改了  相似度算法
+            except Exception as err:
+                print(err)
+                sim = self.cal_sim(sentence, self.question) # 相似度算法有可能发生除零错误
             sims.append((i, sim))
             i = i+1
         sims.sort(key = lambda item:item[1], reverse = True)
         # print(sims)
         ans_sentences = []
-        for i in range(0, 5):
+        for i in range(0, len(self.sentences)):
             ans_sentences.append(self.sentences[sims[i][0]])
         return ans_sentences
     
