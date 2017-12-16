@@ -33,12 +33,12 @@ def get_train_ans(ques_path,ques_type_path,ans_path):
 
         # 输出答案
         answer = ae.do_ans_extract(ans_lst,"",type,question,0.1,0.9)
-        out_file.write(str(i) + "\n")
+        # out_file.write(str(i) + "\n")
         i = i + 1
-        out_file.write(question + "\n")
-        out_file.write(type + "\n")
-        out_file.write(str(ans_lst) + "\n")
-        out_file.write(str(answer)+"\n\n")
+        # out_file.write(question + "\n")
+        # out_file.write(type + "\n")
+        # out_file.write(str(ans_lst) + "\n")
+        out_file.write(str(answer)+"\n")
 
     ques_type_file.close()
     ans_file.close()

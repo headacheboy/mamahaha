@@ -42,14 +42,14 @@ class AnsExtractor(object):
         self.parser.load(par_model_path)
         self.labeller = SementicRoleLabeller()
         self.labeller.load(srl_model_path)
-        self.istime_lst = ['年份是',"时间是"]
+        self.istime_lst = ['年份是',"时间是","哪一年"]
         self.iscolor_lst = ['什么颜色',"哪种颜色","哪个颜色"]
         self.unit_lst = ["回","对","山","只","刀","群","江","条","个","打","尾","手","双","张","溪","挑","坡","首","令","网","辆","座","阵","队",
                          "顶","匹","担","墙","壳","炮","场","扎","棵","支","颗","钟","单","曲","客","罗","岭","阙",
                          "捆","丘","腔","贯","袭","砣","窠","岁","倍","枚","次"]
-        self.islocation_lst = ['哪个城市',"哪个国家",'国籍是',"什么国籍","哪个省","哪座城市"]
+        self.islocation_lst = ['哪个城市',"哪个国家",'国籍是',"什么国籍","哪个省","哪座城市", "县份是","地址在哪里"]
         self.isorganization_lst = ['哪个组织',"组织是"]
-        self.isperson_lst = ['哪个皇帝',"是谁","什么名字","者是"]
+        self.isperson_lst = ['哪个皇帝',"是谁","什么名字","者是","身份是","学家是"]
         self.isnum_lst = list()
         for unit in self.unit_lst:
             self.isnum_lst.append("多少"+unit)
@@ -210,8 +210,92 @@ class AnsExtractor(object):
         arc = self.get_arc_by_index(arcs,arc.head)
         return arc
 
+    def get_index_list(self,str,word):
+        '''
+        获得word在str中的index列表
+        :param str:
+        :param word:
+        :return: 返回一个列表  没有返回空列表
+        '''
+        start = 0
+        lst = list()
+        while start < len(str):
+            index = str.find(word,start)
+            if index == -1:
+                break
+            else:
+                lst.append(index)
+                start = index + 1
+        return lst
 
+    def cal_dis_with_dict(self,ques_kw_dic,ans_kw_dic):
+        '''
+        计算 问题关键词index 和 答案关键词index 之间的距离
+        :param ques_kw_dic:
+        :param ans_ke_dic:
+        :return: 按照距离从小到大的 tuple组成的list
+        '''
+        result_dic = dict()
+        for ans_kw,ans_kw_index_lst in ans_kw_dic.items():
+            temp = 99999
+            for ans_kw_index in ans_kw_index_lst:
+                ans_kw_dis = 0
+                for ques_kw,ques_kw_index_lst in ques_kw_dic.items():
+                    temp_dis = 9999
+                    for ques_kw_index in ques_kw_index_lst:
+                        if abs(ques_kw_index - ans_kw_index) < temp_dis:
+                            temp_dis = abs(ques_kw_index - ans_kw_index)
+                    ans_kw_dis += temp_dis
+                if ans_kw_dis < temp:
+                    temp = ans_kw_dis
+            result_dic[ans_kw] = temp
+        # 排序 从小到大
+        result_tup = sorted(result_dic.items(),key = lambda item:item[1])
+        return result_tup
 
+    def calc_dis_ner_with_dict(self,ques_kw_dic,ner_lst,ans):
+        '''
+        实体集合 计算距离问题关键词最近的
+        :param ques_kw_dic:
+        :param ner_lst:
+        :return: 返回 tuple组成的lst
+        '''
+        ner_dic = dict()
+        for ner in ner_lst:
+            temp = self.get_index_list(ans,ner)
+            if temp:
+                ner_dic[ner] = temp
+        return self.cal_dis_with_dict(ques_kw_dic,ner_dic)
+
+    def get_final_result(self,result_lst):
+        if len(result_lst) > 0:
+            return result_lst[0][0]
+        else:
+            return "未找到准确答案"
+
+    def gen_short_ans(self,ques_kw_lst,ans):
+        '''
+        对于超过 20字的答案 进行截断
+        :param ques_kw_lst:
+        :param ans:
+        :return: 返回答案
+        '''
+        if len(ans) <= 20:
+            return ans
+        pattern = r"[，,。\.！!？\?]"
+        lst = re.split(pattern, ans)
+        result_dic = dict()
+        for senten in lst:
+            score = 0
+            for kw in ques_kw_lst:
+                if senten.find(kw) > -1:
+                    score += 1
+            result_dic[senten] = score
+        result_dic = sorted(result_dic.items(),key=lambda item:item[1],reverse=True)
+        if len(result_dic) > 0:
+            return result_dic[0][0][0:20]
+        else:
+            return "未找到精确答案"
 
 
 
@@ -223,7 +307,15 @@ class AnsExtractor(object):
         self.question = ques # 处理后的问句（或问句集合？）
         self.a = a
         self.b = b # 相似度计算算法的两个参数
+        tfidf = analyse.extract_tags
 
+        # 问题 关键词 距离
+        ques_kw_lst = tfidf(ques)
+        ques_kw_dic = dict()
+        for kw in ques_kw_lst:
+            lst = self.get_index_list(ques, kw)
+            if lst:
+                ques_kw_dic[kw] = lst
         if self.has_spe_words(self.question,self.isnum_lst):
             self.question_type = "NUMBER"
             ques_type = "NUMBER"
@@ -239,6 +331,9 @@ class AnsExtractor(object):
         elif self.has_spe_words(self.question,self.isperson_lst):
             self.question_type = "PERSON"
             ques_type = "PERSON"
+        elif self.has_spe_words(self.question, self.isorganization_lst):
+            self.question_type = "ORGANIZATION"
+            ques_type = "ORGANIZATION"
 
         # 去掉候选答案句中的空白字符
         for i in range(len(self.sentences)):
@@ -257,35 +352,50 @@ class AnsExtractor(object):
             # 这里需要命名实体识别
             # 先直接怼吧
             final_anses = self.get_all_NER(ans,'Nh')
+            temp_lst = list()
+            for ner in final_anses:
+                if ques.find(ner) == -1:
+                    temp_lst.append(ner)
+            final_anses = temp_lst
             # if self.question == "唯一获得香港电影金像奖最佳女配角的中国大陆演员是？":
             #     print(ans)
-            for item in final_anses:
-                if ques.find(item) == -1:
-                    return item
+            # for item in final_anses:
+            #     if ques.find(item) == -1:
+            #         return item
             if len(final_anses) == 0:
-                return ans
+                return self.gen_short_ans(ques_kw_lst,ans)
             else:
-                return final_anses[0]
+                return self.get_final_result(self.calc_dis_ner_with_dict(ques_kw_dic,final_anses,ans))
         elif self.question_type == 'LOCATION':
             final_anses = self.get_all_NER(ans, 'Ns')
+            temp_lst = list()
+            for ner in final_anses:
+                if ques.find(ner) == -1:
+                    temp_lst.append(ner)
+            final_anses = temp_lst
             # print(final_anses)
-            for item in final_anses:
-                if ques.find(item) == -1:
-                    return item
+            # for item in final_anses:
+            #     if ques.find(item) == -1:
+            #         return item
             if len(final_anses) == 0:
-                return ans
+                return self.gen_short_ans(ques_kw_lst,ans)
             else:
-                return final_anses[0]
+                return self.get_final_result(self.calc_dis_ner_with_dict(ques_kw_dic,final_anses,ans))
         elif self.question_type == 'ORGANIZATION':
             final_anses = self.get_all_NER(ans, 'Ni')
+            temp_lst = list()
+            for ner in final_anses:
+                if ques.find(ner) == -1:
+                    temp_lst.append(ner)
+            final_anses = temp_lst
             # print(final_anses)
-            for item in final_anses:
-                if ques.find(item) == -1:
-                    return item
+            # for item in final_anses:
+            #     if ques.find(item) == -1:
+            #         return item
             if len(final_anses) == 0:
-                return ans
+                return self.gen_short_ans(ques_kw_lst,ans)
             else:
-                return final_anses[0]
+                return self.get_final_result(self.calc_dis_ner_with_dict(ques_kw_dic,final_anses,ans))
         elif self.question_type == 'NUMBER' :
             for sentence in ans_sentences:
                 for num_word in self.isnum_lst:
@@ -293,21 +403,21 @@ class AnsExtractor(object):
                         pattern = re.compile("([\d|零|一|二|三|四|五|六|七|八|九|十|百|千|万|亿]+){unit}".format(unit=num_word[-1]))
                         final_anses = pattern.findall(ans)
                         if final_anses:
-                            return final_anses[0]
+                            return self.get_final_result(self.calc_dis_ner_with_dict(ques_kw_dic,final_anses,ans))
 
                 num_lst = self.get_pos_lst(sentence,'m')
                 if len(num_lst) == 0:
-                    pass
+                    return self.gen_short_ans(ques_kw_lst,ans)
                 else:
-                    return num_lst[0]
+                    return self.get_final_result(self.calc_dis_ner_with_dict(ques_kw_dic,num_lst,ans))
             return ans_sentences[0] # 没有找到时间  返回排名最高的句子
         elif self.question_type == 'TIME':
             for sentence in ans_sentences:
                 time_lst = self.get_pos_lst(sentence,'nt')
                 if len(time_lst) == 0:
-                    pass
+                    return self.gen_short_ans(ques_kw_lst,ans)
                 else:
-                    return time_lst[0]
+                    return self.get_final_result(self.calc_dis_ner_with_dict(ques_kw_dic,time_lst,ans))
             return ans_sentences[0] # 没有找到时间  返回排名最高的句子
         elif self.question_type == 'NEXT_SENTENCE':
             type = self.get_context_type(ques)
@@ -359,9 +469,8 @@ class AnsExtractor(object):
             if final_anses:
                 return '、'.join(final_anses)
             else:
-                return ans
+                return self.gen_short_ans(ques_kw_lst,ans)
         elif self.question_type == 'AFFIRMATION': # 认同关系 是否
-            tfidf = analyse.extract_tags
             kw_lst = tfidf(self.question)[0:5]
             score = 0
             for kw in kw_lst:
@@ -372,93 +481,136 @@ class AnsExtractor(object):
             else:
                 return "否"
         else: #通用解决方法
-            ans = ans_sentences[0] # 从候选答案集中选出一个句子
-            ans_words = list(self.segmentor.segment(ans)) #ａｎｓ　的分词
-            ans_postags = list(self.postagger.postag(ans_words)) # 词性标注
-            ans_arcs = self.parser.parse(ans_words,ans_postags)
-            # 问句进行分词
-            # 有的问句没有类型  直接加一个‘什么’
-            if (ques[-1] in ['?','？','.','。','!','！'] and ques[-2] == '是'):
-                ques = ques[0:-1] + '什么' + ques[-1]
-            elif ques[-1] == '是':
-                ques = ques + '什么'
-            que_words = list(self.segmentor.segment(ques))
-            que_postags = list(self.postagger.postag(que_words))
-            que_arcs = self.parser.parse(que_words,que_postags)
+            # 对问题和候选答案进行关键词提取
+            ques_kw_lst = tfidf(ques)
+            ans_kw_lst = tfidf(ans)
+
+            # 去掉出现在问题的关键词
+            temp_lst = list()
+            for kw in ans_kw_lst:
+                if ques.find(kw) == -1:
+                    temp_lst.append(kw)
+            ans_kw_lst = temp_lst
+
+            # 对答案关键词 作词性标注
+            ans_kw_postags = self.postagger.postag(ans_kw_lst)
+            temp_lst = list()
+            index = 0
+            for postag in ans_kw_postags:
+                if postag in ['n', 'nd', 'nh', 'ni', 'nl', 'ns', 'nt', 'nz']:
+                    temp_lst.append(ans_kw_lst[index])
+                index = index + 1
+            ans_kw_lst = temp_lst
+
+            # 计算关键词的位置
+            # 问题关键词
+            ques_kw_dic = dict()
+            for kw in ques_kw_lst:
+                lst = self.get_index_list(ques,kw)
+                if lst:
+                    ques_kw_dic[kw] = lst
+            # 答案关键词
+            ans_kw_dic = dict()
+            for kw in ans_kw_lst:
+                lst = self.get_index_list(ans, kw)
+                if lst:
+                    ans_kw_dic[kw] = lst
+
+            # 得到 距离
+            ans_dis = self.get_final_result(self.cal_dis_with_dict(ques_kw_dic,ans_kw_dic))
+            return ans_dis
 
 
-            # 找到ans_arcs中的head
-            i = 0
-            for arc in ans_arcs:
-                if arc.relation == 'HED':
-                    ans_core_word = ans_words[i]
-                    ans_core_word_index = i + 1 # 依存关系从1开始   0是root
-                    break
-                i = i + 1
-            ans_second_words = dict() # 依存关系树中 第二级词语
-            i = 0
-            for arc in ans_arcs:
-                if arc.head == ans_core_word_index:
-                    ans_second_words[ans_words[i]] = {'tag':ans_postags[i],'rea_index':i,'rel':arc.relation}
-                i = i+1
 
-            # 找到que_arcs中的head
-            i = 0
-            try:
-                for arc in que_arcs:
-                    if arc.relation == 'HED':
-                        que_core_word = que_words[i]
-                        que_core_word_index = i + 1  # 依存关系从1开始   0是root
-                        break
-                    i = i + 1
-            except Exception as e:
-                print(ans_words)
-                print(i)
-                print("\t".join("%d:%s" % (arc.head, arc.relation) for arc in que_arcs))
-            que_second_words = dict()  # 依存关系树中 第二级词语
-            i = 0
-            for arc in que_arcs:
-                if arc.head == que_core_word_index:
-                    que_second_words[que_words[i]] = {'tag': que_postags[i], 'rea_index': i, 'rel': arc.relation}
-                i = i + 1
 
-            # 删除 非名词 在问题种出现的名词
-            del_word_lst = list()
-            for word,dic in ans_second_words.items():
-                if ques.find(word) > -1 or dic['tag'] != 'n':
-                    del_word_lst.append(word)
-                    continue
 
-            for word in del_word_lst:
-                del ans_second_words[word]
-
-            if len(ans_second_words) == 0:
-                return ans
-            elif len(ans_second_words) == 1:
-                for word,dic in ans_second_words.items():
-                    return  word
-
-            # 依旧存在多个名词时
-            question_word_list = ['谁','什么','哪一个','哪个','哪','多少']
-            question_word = self.list_has_intersection(que_words,question_word_list) # 疑问词
-            final_anses = ''
-            if question_word == None: # 找不到 返回第一个词语
-                for word,dic in ans_second_words.items():
-                    final_anses = final_anses + word
-                return final_anses
-
-            if question_word in list(que_second_words.keys()):
-                rel = que_second_words[question_word]['rel']
-            else:
-                rel = self.get_core_rel(que_arcs,que_words,question_word)
-
-            for word,dic in ans_second_words.items():
-                if dic['rel'] == rel:
-                    return word
-            # 没有找到一样的 返回第一个吧
-            for word,dic in ans_second_words.items():
-                final_anses = final_anses + word
-            return final_anses
+            # ans = ans_sentences[0] # 从候选答案集中选出一个句子
+            # ans_words = list(self.segmentor.segment(ans)) #ａｎｓ　的分词
+            # ans_postags = list(self.postagger.postag(ans_words)) # 词性标注
+            # ans_arcs = self.parser.parse(ans_words,ans_postags)
+            # # 问句进行分词
+            # # 有的问句没有类型  直接加一个‘什么’
+            # if (ques[-1] in ['?','？','.','。','!','！'] and ques[-2] == '是'):
+            #     ques = ques[0:-1] + '什么' + ques[-1]
+            # elif ques[-1] == '是':
+            #     ques = ques + '什么'
+            # que_words = list(self.segmentor.segment(ques))
+            # que_postags = list(self.postagger.postag(que_words))
+            # que_arcs = self.parser.parse(que_words,que_postags)
+            #
+            #
+            # # 找到ans_arcs中的head
+            # i = 0
+            # for arc in ans_arcs:
+            #     if arc.relation == 'HED':
+            #         ans_core_word = ans_words[i]
+            #         ans_core_word_index = i + 1 # 依存关系从1开始   0是root
+            #         break
+            #     i = i + 1
+            # ans_second_words = dict() # 依存关系树中 第二级词语
+            # i = 0
+            # for arc in ans_arcs:
+            #     if arc.head == ans_core_word_index:
+            #         ans_second_words[ans_words[i]] = {'tag':ans_postags[i],'rea_index':i,'rel':arc.relation}
+            #     i = i+1
+            #
+            # # 找到que_arcs中的head
+            # i = 0
+            # try:
+            #     for arc in que_arcs:
+            #         if arc.relation == 'HED':
+            #             que_core_word = que_words[i]
+            #             que_core_word_index = i + 1  # 依存关系从1开始   0是root
+            #             break
+            #         i = i + 1
+            # except Exception as e:
+            #     print(ans_words)
+            #     print(i)
+            #     print("\t".join("%d:%s" % (arc.head, arc.relation) for arc in que_arcs))
+            # que_second_words = dict()  # 依存关系树中 第二级词语
+            # i = 0
+            # for arc in que_arcs:
+            #     if arc.head == que_core_word_index:
+            #         que_second_words[que_words[i]] = {'tag': que_postags[i], 'rea_index': i, 'rel': arc.relation}
+            #     i = i + 1
+            #
+            # # 删除 非名词 在问题种出现的名词
+            # del_word_lst = list()
+            # for word,dic in ans_second_words.items():
+            #     if ques.find(word) > -1 or dic['tag'] != 'n':
+            #         del_word_lst.append(word)
+            #         continue
+            #
+            # for word in del_word_lst:
+            #     del ans_second_words[word]
+            #
+            # if len(ans_second_words) == 0:
+            #     return ans
+            # elif len(ans_second_words) == 1:
+            #     for word,dic in ans_second_words.items():
+            #         return  word
+            #
+            # # 依旧存在多个名词时
+            # question_word_list = ['谁','什么','哪一个','哪个','哪','多少']
+            # question_word = self.list_has_intersection(que_words,question_word_list) # 疑问词
+            # final_anses = ''
+            # if question_word == None: # 找不到 返回第一个词语
+            #     for word,dic in ans_second_words.items():
+            #         final_anses = final_anses + word
+            #     return final_anses
+            #
+            # if question_word in list(que_second_words.keys()):
+            #     rel = que_second_words[question_word]['rel']
+            # else:
+            #     rel = self.get_core_rel(que_arcs,que_words,question_word)
+            #
+            # for word,dic in ans_second_words.items():
+            #     if dic['rel'] == rel:
+            #         return word
+            # # 没有找到一样的 返回第一个吧
+            # for word,dic in ans_second_words.items():
+            #     final_anses = final_anses + word
+            # return final_anses
 
 
 
