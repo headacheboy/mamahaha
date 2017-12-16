@@ -42,18 +42,18 @@ class AnsExtractor(object):
         self.parser.load(par_model_path)
         self.labeller = SementicRoleLabeller()
         self.labeller.load(srl_model_path)
-        self.istime_lst = ['年份是',"时间是","哪一年"]
-        self.iscolor_lst = ['什么颜色',"哪种颜色","哪个颜色"]
+        self.istime_lst = ['年份是',"时间是","哪一年","何时","什么时候","什么时间","哪一月","哪一日"]
+        self.iscolor_lst = ['什么颜色',"哪种颜色","哪个颜色","颜色是"]
         self.unit_lst = ["回","对","山","只","刀","群","江","条","个","打","尾","手","双","张","溪","挑","坡","首","令","网","辆","座","阵","队",
                          "顶","匹","担","墙","壳","炮","场","扎","棵","支","颗","钟","单","曲","客","罗","岭","阙",
                          "捆","丘","腔","贯","袭","砣","窠","岁","倍","枚","次"]
-        self.islocation_lst = ['哪个城市',"哪个国家",'国籍是',"什么国籍","哪个省","哪座城市", "县份是","地址在哪里"]
-        self.isorganization_lst = ['哪个组织',"组织是"]
-        self.isperson_lst = ['哪个皇帝',"是谁","什么名字","者是","身份是","学家是"]
+        self.islocation_lst = ['哪个城市',"哪个国家",'国籍是',"什么国籍","哪个省","哪座城市", "县份是","地址在哪里","哪里","何处","何地","哪儿",
+                               "什么地方","什么地点"]
+        self.isorganization_lst = ['哪个组织',"组织是","哪个机构","什么组织","什么机构"]
+        self.isperson_lst = ['哪个皇帝',"是谁","什么名字","者是","身份是","学家是","什么人","哪个人"]
         self.isnum_lst = list()
         for unit in self.unit_lst:
             self.isnum_lst.append("多少"+unit)
-        
         self.stop_words = [] # 停用词目前还没用到
         self.sim_word_code = {} # 每个词有一个list，是它的编码（可能多个）
         self.get_sim_cloud()
