@@ -8,8 +8,6 @@ from pyltp import Postagger
 from pyltp import NamedEntityRecognizer
 from pyltp import Parser
 from pyltp import SementicRoleLabeller
-from pyltp import VectorOfParseResult
-from pyltp import ParseResult
 from jieba import analyse
 
 LTP_DATA_DIR = 'D:\project\ltp-data-v3.3.1\ltp_data'  # ltp模型目录的路径
@@ -26,10 +24,10 @@ srl_model_path = os.path.join(LTP_DATA_DIR,'srl') # 语义角色标注模型
 # 答案提取模块类
 class AnsExtractor(object):
     
-    # 修改了init函数，传进来的句子、关键字等参数不再作为init函数的参数
-    # init做的事情只有：
+    # init做的事情有：
     # 1、加载模型
     # 2、加载同义词词林
+    # 3、加载补充的问题分类所需的规则数组
     # 其他参数传递给主流程函数do_ans_extract
     def __init__(self):
         self.segmentor = Segmentor()  # 初始化实例
@@ -42,6 +40,7 @@ class AnsExtractor(object):
         self.parser.load(par_model_path)
         self.labeller = SementicRoleLabeller()
         self.labeller.load(srl_model_path)
+        # 以下是补充的问题分类所需的规则数组
         self.istime_lst = ['年份是',"时间是","哪一年","何时","什么时候","什么时间","哪一月","哪一日"]
         self.iscolor_lst = ['什么颜色',"哪种颜色","哪个颜色","颜色是"]
         self.unit_lst = ["回","对","山","只","刀","群","江","条","个","打","尾","手","双","张","溪","挑","坡","首","令","网","辆","座","阵","队",
@@ -59,12 +58,13 @@ class AnsExtractor(object):
         self.get_sim_cloud()
         
     # 读取同义词词林
-    """
-    同义词词林中的词有三种关系，同义、相关（不一定同义）、独立词
-    如果用于计算相似度的话，相关的词语具有相同的code，也是能接受的
-    所以并没有区分词关系，而是直接读取了词的code
-    """
     def get_sim_cloud(self):
+        """
+        同义词词林中的词有三种关系，同义、相关（不一定同义）、独立词
+        如果用于计算相似度的话，相关的词语具有相同的code，也是能接受的
+        所以并没有区分词关系，而是直接读取了词的code
+        填充sim_word_code
+        """
         sim_file = open("similarity.txt", 'r', encoding = "utf-8")
         lines = sim_file.readlines(1000000)
         # 对行按格式进行处理
@@ -258,6 +258,7 @@ class AnsExtractor(object):
         实体集合 计算距离问题关键词最近的
         :param ques_kw_dic:
         :param ner_lst:
+        :param ans:
         :return: 返回 tuple组成的lst
         '''
         ner_dic = dict()
@@ -268,6 +269,9 @@ class AnsExtractor(object):
         return self.cal_dis_with_dict(ques_kw_dic,ner_dic)
 
     def get_final_result(self,result_lst):
+        '''
+        对最终返回结果进行包装，若没有结果，返回"未找到准确答案"
+        '''
         if len(result_lst) > 0:
             return result_lst[0][0]
         else:
@@ -297,25 +301,34 @@ class AnsExtractor(object):
         else:
             return "未找到精确答案"
 
-
-
-    # 调用答案抽取算法，主流程函数，返回即为答案
     def do_ans_extract(self, sents, key_words, ques_type, ques, a, b):
+        '''
+        调用答案抽取算法，这是主流程函数，返回即为答案
+        :params: 这几个参数有候选答案句集合、关键词集合（没有用到）、问题种类、问句、算法参数
+        :return:返回最终的答案
+            返回的答案大多是一个词，如果不能返回一个词
+            那么返回一个长度不超过20个字的句子
+            如果句子和词都找不到
+                返回"未找到准确答案"
+            如果没有得到合适的候选答案句集合
+                返回"没有找到相关内容"
+        '''
         self.sentences = sents # 候选答案句集合
         self.key_words = key_words # 关键词集合
         self.question_type = ques_type # 问题种类
-        self.question = ques # 处理后的问句（或问句集合？）
+        self.question = ques # 问句
         self.a = a
-        self.b = b # 相似度计算算法的两个参数
+        self.b = b # 句法相似度计算算法的两个参数
         tfidf = analyse.extract_tags
 
-        # 问题 关键词 距离
+        # 问题 关键词 位置
         ques_kw_lst = tfidf(ques)
         ques_kw_dic = dict()
         for kw in ques_kw_lst:
             lst = self.get_index_list(ques, kw)
             if lst:
                 ques_kw_dic[kw] = lst
+        # 补充的基于规则的问题分类
         if self.has_spe_words(self.question,self.isnum_lst):
             self.question_type = "NUMBER"
             ques_type = "NUMBER"
@@ -338,35 +351,28 @@ class AnsExtractor(object):
         # 去掉候选答案句中的空白字符
         for i in range(len(self.sentences)):
             self.sentences[i] = ''.join(self.sentences[i].split())
-        # 首先得到五个最有可能包含答案的句子
-        ans_sentences = self.sort_sentences() # !!!暂时停用
-        # ans_sentences = self.sentences
-        # print(ans_sentences)
+        # 首先得到最有可能包含答案的句子
+        ans_sentences = self.sort_sentences() 
         
         # 然后根据问题类型，在这五个句子中进行答案抽取
         if len(ans_sentences) == 0:
             return "没有找到相关内容"
+        # 取最可能包含答案的句子，进入下一步
         ans = ans_sentences[0]
-        # print(ans)
 
-        # print(self.get_all_NER(ques,'Nh'))
+        # 基于问题分类器的分类和规则补充的分类，采取不同的抽取策略
         if self.question_type == "PERSON":
-            # 这里需要命名实体识别
-            # 先直接怼吧
             final_anses = self.get_all_NER(ans,'Nh')
             temp_lst = list()
+            # 去除出现在问句中的人物实体
             for ner in final_anses:
                 if ques.find(ner) == -1:
                     temp_lst.append(ner)
             final_anses = temp_lst
-            # if self.question == "唯一获得香港电影金像奖最佳女配角的中国大陆演员是？":
-            #     print(ans)
-            # for item in final_anses:
-            #     if ques.find(item) == -1:
-            #         return item
             if len(final_anses) == 0:
                 return self.gen_short_ans(ques_kw_lst,ans)
             else:
+                # 返回和问题关键词最接近的实体
                 return self.get_final_result(self.calc_dis_ner_with_dict(ques_kw_dic,final_anses,ans))
         elif self.question_type == 'LOCATION':
             final_anses = self.get_all_NER(ans, 'Ns')
@@ -375,10 +381,6 @@ class AnsExtractor(object):
                 if ques.find(ner) == -1:
                     temp_lst.append(ner)
             final_anses = temp_lst
-            # print(final_anses)
-            # for item in final_anses:
-            #     if ques.find(item) == -1:
-            #         return item
             if len(final_anses) == 0:
                 return self.gen_short_ans(ques_kw_lst,ans)
             else:
@@ -390,10 +392,6 @@ class AnsExtractor(object):
                 if ques.find(ner) == -1:
                     temp_lst.append(ner)
             final_anses = temp_lst
-            # print(final_anses)
-            # for item in final_anses:
-            #     if ques.find(item) == -1:
-            #         return item
             if len(final_anses) == 0:
                 return self.gen_short_ans(ques_kw_lst,ans)
             else:
@@ -412,7 +410,7 @@ class AnsExtractor(object):
                     return self.gen_short_ans(ques_kw_lst,ans)
                 else:
                     return self.get_final_result(self.calc_dis_ner_with_dict(ques_kw_dic,num_lst,ans))
-            return ans_sentences[0] # 没有找到时间  返回排名最高的句子
+            return ans_sentences[0] # 没有找到 返回排名最高的句子，注：这句话没用
         elif self.question_type == 'TIME':
             for sentence in ans_sentences:
                 time_lst = self.get_pos_lst(sentence,'nt')
@@ -420,7 +418,7 @@ class AnsExtractor(object):
                     return self.gen_short_ans(ques_kw_lst,ans)
                 else:
                     return self.get_final_result(self.calc_dis_ner_with_dict(ques_kw_dic,time_lst,ans))
-            return ans_sentences[0] # 没有找到时间  返回排名最高的句子
+            return ans_sentences[0] # 没有找到  返回排名最高的句子,注：这句话没用
         elif self.question_type == 'NEXT_SENTENCE':
             type = self.get_context_type(ques)
             pattern1 = re.compile('“(.*?)”')
@@ -484,7 +482,7 @@ class AnsExtractor(object):
                 return "是"
             else:
                 return "否"
-        else: #通用解决方法
+        else: #通用解决方法，针对一般类型的问题
             # 对问题和候选答案进行关键词提取
             ques_kw_lst = tfidf(ques)
             ans_kw_lst = tfidf(ans)
@@ -496,7 +494,7 @@ class AnsExtractor(object):
                     temp_lst.append(kw)
             ans_kw_lst = temp_lst
 
-            # 对答案关键词 作词性标注
+            # 对答案关键词 作词性标注，保留名词性质的词
             ans_kw_postags = self.postagger.postag(ans_kw_lst)
             temp_lst = list()
             index = 0
@@ -520,109 +518,11 @@ class AnsExtractor(object):
                 if lst:
                     ans_kw_dic[kw] = lst
 
-            # 得到 距离
+            # 得到 距离排序后，最小的那一个词作为答案
             ans_dis = self.get_final_result(self.cal_dis_with_dict(ques_kw_dic,ans_kw_dic))
             return ans_dis
-
-
-
-
-
-            # ans = ans_sentences[0] # 从候选答案集中选出一个句子
-            # ans_words = list(self.segmentor.segment(ans)) #ａｎｓ　的分词
-            # ans_postags = list(self.postagger.postag(ans_words)) # 词性标注
-            # ans_arcs = self.parser.parse(ans_words,ans_postags)
-            # # 问句进行分词
-            # # 有的问句没有类型  直接加一个‘什么’
-            # if (ques[-1] in ['?','？','.','。','!','！'] and ques[-2] == '是'):
-            #     ques = ques[0:-1] + '什么' + ques[-1]
-            # elif ques[-1] == '是':
-            #     ques = ques + '什么'
-            # que_words = list(self.segmentor.segment(ques))
-            # que_postags = list(self.postagger.postag(que_words))
-            # que_arcs = self.parser.parse(que_words,que_postags)
-            #
-            #
-            # # 找到ans_arcs中的head
-            # i = 0
-            # for arc in ans_arcs:
-            #     if arc.relation == 'HED':
-            #         ans_core_word = ans_words[i]
-            #         ans_core_word_index = i + 1 # 依存关系从1开始   0是root
-            #         break
-            #     i = i + 1
-            # ans_second_words = dict() # 依存关系树中 第二级词语
-            # i = 0
-            # for arc in ans_arcs:
-            #     if arc.head == ans_core_word_index:
-            #         ans_second_words[ans_words[i]] = {'tag':ans_postags[i],'rea_index':i,'rel':arc.relation}
-            #     i = i+1
-            #
-            # # 找到que_arcs中的head
-            # i = 0
-            # try:
-            #     for arc in que_arcs:
-            #         if arc.relation == 'HED':
-            #             que_core_word = que_words[i]
-            #             que_core_word_index = i + 1  # 依存关系从1开始   0是root
-            #             break
-            #         i = i + 1
-            # except Exception as e:
-            #     print(ans_words)
-            #     print(i)
-            #     print("\t".join("%d:%s" % (arc.head, arc.relation) for arc in que_arcs))
-            # que_second_words = dict()  # 依存关系树中 第二级词语
-            # i = 0
-            # for arc in que_arcs:
-            #     if arc.head == que_core_word_index:
-            #         que_second_words[que_words[i]] = {'tag': que_postags[i], 'rea_index': i, 'rel': arc.relation}
-            #     i = i + 1
-            #
-            # # 删除 非名词 在问题种出现的名词
-            # del_word_lst = list()
-            # for word,dic in ans_second_words.items():
-            #     if ques.find(word) > -1 or dic['tag'] != 'n':
-            #         del_word_lst.append(word)
-            #         continue
-            #
-            # for word in del_word_lst:
-            #     del ans_second_words[word]
-            #
-            # if len(ans_second_words) == 0:
-            #     return ans
-            # elif len(ans_second_words) == 1:
-            #     for word,dic in ans_second_words.items():
-            #         return  word
-            #
-            # # 依旧存在多个名词时
-            # question_word_list = ['谁','什么','哪一个','哪个','哪','多少']
-            # question_word = self.list_has_intersection(que_words,question_word_list) # 疑问词
-            # final_anses = ''
-            # if question_word == None: # 找不到 返回第一个词语
-            #     for word,dic in ans_second_words.items():
-            #         final_anses = final_anses + word
-            #     return final_anses
-            #
-            # if question_word in list(que_second_words.keys()):
-            #     rel = que_second_words[question_word]['rel']
-            # else:
-            #     rel = self.get_core_rel(que_arcs,que_words,question_word)
-            #
-            # for word,dic in ans_second_words.items():
-            #     if dic['rel'] == rel:
-            #         return word
-            # # 没有找到一样的 返回第一个吧
-            # for word,dic in ans_second_words.items():
-            #     final_anses = final_anses + word
-            # return final_anses
-
-
-
-
-
-
     
-    # 计算候选答案句与问句的相似度，并返回排序后相似度最高的五个句子
+    # 计算候选答案句与问句的相似度，并返回按相似度排序的句子
     def sort_sentences(self):
         # 首先得到问句的c&r词集
         question_cr_words = self.get_centrial_and_rela_words(self.question)
@@ -630,14 +530,13 @@ class AnsExtractor(object):
         i = 0
         for sentence in self.sentences:
             try:
-                sim = 0.1*self.calc_similarity(sentence, self.question) + 0.9*self.cal_sim(sentence, self.question) #!!!  这里修改了  相似度算法
+                sim = 0.1*self.calc_similarity(sentence, question_cr_words) + 0.9*self.cal_sim(sentence, self.question)
             except Exception as err:
                 print(err)
                 sim = self.cal_sim(sentence, self.question) # 相似度算法有可能发生除零错误
             sims.append((i, sim))
             i = i+1
         sims.sort(key = lambda item:item[1], reverse = True)
-        # print(sims)
         ans_sentences = []
         for i in range(0, len(self.sentences)):
             ans_sentences.append(self.sentences[sims[i][0]])
@@ -646,15 +545,12 @@ class AnsExtractor(object):
     # 句法分析，得到一个句子的核心词和依附于核心词的词的集合
     def get_centrial_and_rela_words(self, sentence):
         words = self.segmentor.segment(sentence) # 分词
-        # print(' '.join(words))
         postags = self.postagger.postag(words) # 词性标注
-        # print(' '.join(postags))
         arcs = self.parser.parse(words, postags) # 句法分析
         i = 1 # 临时变量，指示句法树当前结点
         layer_2 = [] # 句法树第二层结点索引
         layer_3 = [] # 句法树第三层结点索引
         for arc in arcs:
-            # print("%d<--%d:%s" % (i, arc.head, arc.relation))
             # 额外的自然语言处理方案——规则补充的句法分析
             """
             添加几条规则
@@ -666,7 +562,7 @@ class AnsExtractor(object):
             3、对虚词进行处理，根据前文所做的词性标注处理,去除与句子意思不相关的
             虚词，所依据的规则如上。 
             """
-            # 时间有限，还没实现这些规则。。。
+            # 有点复杂，所以没实现这些规则。
             # HED表示，这个词是核心词
             if arc.relation == "HED":
                 centrial_word = i # 核心词
@@ -683,7 +579,7 @@ class AnsExtractor(object):
                 layer_3.append(i) # 找到第三层结点
             i = i+1
         # 找核心词 & 依附于核心词的词语
-        # 目前没做上面几条规则处理，除了核心词，把第二第三层的词都算作依附于核心词
+        # 除了核心词，把第二第三层的词都算作依附于核心词
         rela_words = []
         # 规定：rela_words数组的第一个词是核心词
         rela_words.append(words[centrial_word-1])
@@ -712,12 +608,9 @@ class AnsExtractor(object):
                     dist = tmp_dist
         return dist
 
-
-
-
     def cal_sim(self,sentence,ques):
         '''
-        计算相似度
+        计算相似度，基于关键词，不涉及句法
         :param sentence:
         :param question_cr_words:
         :return:
@@ -733,7 +626,7 @@ class AnsExtractor(object):
     # 计算某句子与问句的相似度
     # 对于认不出来的词（同义词词林中没有）
     # 有很大可能是专有名词等，这时都识别为 “谜、谜语”即可
-    # 专有名词于是被认为是相似的，我觉得这个是有道理的
+    # 专有名词于是被认为是相似的
     def calc_similarity(self, sentence, question_cr_words):
         # 对句子进行句法分析，得到c&r词集
         cr_words = self.get_centrial_and_rela_words(sentence)
@@ -799,38 +692,3 @@ class AnsExtractor(object):
 
 # 现在生成答案提取器之后，调用do_ans_extract复用即可
 ans_extractor = AnsExtractor()
-# # 测试1
-# test_sentences = ["《资治通鉴》是我国古代著名史学家、政治家司马光和他的助手刘攽、刘恕、范祖禹、司马康等人历时十九年编纂的一部规模空前的编年体通史巨著",
-#                   "《资治通鉴》（常简作《通鉴》）是由北宋司马光主编的一部多卷本编年体史书",
-#                   "《资治通鉴》是司马光及其助刘攽、刘怒、范祖禹等根据大量的史料编纂而成的一部编年体史书",
-#                   "《资治通鉴》是由北宋司马光主编的一部多卷本编年体史书",
-#                   "史记的作者是司马迁",
-#                   "《论语》这类书比作教材中的公式概念,把《资治通鉴》比作试题",
-#                   "想买一套《史记》和《资治通鉴》,求推荐版本",
-#                   " 姜鹏品读《资治通鉴》"]
-# answer = ans_extractor.do_ans_extract(test_sentences, "", "人物", "《资治通鉴》的作者是谁？",
-#                                       0.8, 0.2)
-# print(answer)
-#
-# # 测试2
-# test_sentences = ["木婉清的母亲秦红棉被段正淳负心后伤心欲绝",
-#                   "《天龙八部》中段誉和木婉清的爱情故事",
-#                   "木婉清,金庸武侠小说《天龙八部》中的人物",
-#                   "天龙八部(世纪新修版)书中最后一段介绍了木婉清被册封为贵妃。",
-#                   "木婉清同父异母的姐姐是王语嫣",
-#                   "木婉清的个性里沿袭了一部分母亲的执着和父亲的多情",
-#                   "《天龙八部》中木婉清的饰演者有很多,最近的就有赵圆瑗、蒋欣等",
-#                   "秦红棉，金庸武侠小说《天龙八部》中的人物，外号修罗刀,是木婉清的母亲"]
-# answer = ans_extractor.do_ans_extract(test_sentences, "", "人物", "金庸小说《天龙八部》中，木婉清的母亲是谁?",
-#                                       0.8, 0.2)
-# print(answer)
-# 测试3
-# test_sentences = ["根据1939年签署的苏德互不侵犯条约，该市被划入罗马尼亚管治",
-#                   "这一示威是为了希望世界能够关心三国共同的历史遭遇——在1939年8月23日苏联和纳粹德国秘密签订的《苏德互不侵犯条约 》中，该三国被苏联占领。",
-#                   "苏德互不侵犯条约《苏德 互不侵犯条约》是1939年第二次世界大战爆发前苏联与纳粹德国在莫斯科所秘密签订之互不侵犯条约，目标是初步建立苏德在扩张之间的友谊与共识，并导致波兰被瓜分。",
-#                   "最后 ， 双方 在 8 月 23 日 签订 德苏 互不侵犯条约.",
-#                   " 8 月 17 日 ， 德驻 苏 大使 舒伦堡 再次 会见 莫洛托夫 ， 表示 愿 与 苏 缔结 一项 互不侵犯条约 。"
-#                  ]
-# answer = ans_extractor.do_ans_extract(test_sentences, "", "地名", "《苏德互不侵犯条约》的签订地点是",
-#                                       0.8, 0.2)
-# print(answer)
